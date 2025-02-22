@@ -1,101 +1,80 @@
+// main.js
+
+//--------------------------------------------------
+// 1) Imports & Environment Variables
+//--------------------------------------------------
 const ethers = require("ethers");
 const dotenv = require("dotenv");
 dotenv.config();
 
-// // HTTP Provider url if using localhost and running own full node
-// "http://localhost:8545"
-// // Otherwise use Alchemy, Infura, QuickNode etc
+// If Node < 18, install node-fetch: npm install node-fetch
+// Then uncomment the line below:
+// const fetch = require("node-fetch");
 
-// // WSS Provider url if using localhost and running own full node
-// "ws://localhost:8546"
-// // Otherwise use Alchemy, Infura, QuickNode etc
+//--------------------------------------------------
+// 2) Telegram Send Function
+//--------------------------------------------------
+async function sendTelegramMessage(messageText) {
+  try {
+    const botToken = process.env.TELEGRAM_BOT_TOKEN; // e.g. 123456789:ABC-YourToken
+    const chatId = process.env.TELEGRAM_CHAT_ID;     // e.g. 123456789
 
-// Http Provider
-const httpProviderUrl = process.env.PROVIDER_HTTP;
-const provider = new ethers.providers.JsonRpcProvider(httpProviderUrl);
-
-// WSS Provider
-const wssProviderUrl = process.env.PROVIDER_WSS;
-const providerWSS = new ethers.providers.WebSocketProvider(wssProviderUrl);
-
-// Uniswap V3 Swap Contract
-const addressUniswapV3 = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
-
-// ERC20 ABI
-const abiERC20 = [
-  "function decimals() view returns (uint8)",
-  "function symbol() view returns (string)",
-];
-
-// MAIN Function
-const main = async () => {
-  // On Pending
-  providerWSS.on("pending", async (txHash) => {
-
-    // Get transaction
-    try {
-      const tx = await provider.getTransaction(txHash);
-
-      // Ensure on Uniswap V3
-      if (tx && tx.to === addressUniswapV3) {
-        // Get data slice in Hex
-        const dataSlice = ethers.utils.hexDataSlice(tx.data, 4);
-
-        // Ensure desired data lenfth
-        if (tx.data.length === 522) {
-          // Decode data
-          const decoded = ethers.utils.defaultAbiCoder.decode(
-            [
-              "address",
-              "address",
-              "uint24",
-              "address",
-              "uint256",
-              "uint256",
-              "uint256",
-              "uint160",
-            ],
-            dataSlice
-          );
-
-          // Log decoded data
-          console.log("");
-          console.log("Open Transaction: ", tx.hash);
-          console.log(decoded);
-
-          // Interpret data - Contracts
-          const contract0 = new ethers.Contract(decoded[0], abiERC20, provider);
-          const contract1 = new ethers.Contract(decoded[1], abiERC20, provider);
-
-          // Interpret data - Symbols
-          const symbol0 = await contract0.symbol();
-          const symbol1 = await contract1.symbol();
-
-          // Interpret data - Decimals
-          const decimals0 = await contract0.decimals();
-          const decimals1 = await contract1.decimals();
-
-          // Interpret data - Values
-          const amountOut = Number(
-            ethers.utils.formatUnits(decoded[5], decimals1)
-          );
-
-          // Interpret data - Values
-          const amountInMax = Number(
-            ethers.utils.formatUnits(decoded[6], decimals0)
-          );
-
-          // Readout
-          console.log("symbol0: ", symbol0, decimals0);
-          console.log("symbol1: ", symbol1, decimals1);
-          console.log("amountOut: ", amountOut);
-          console.log("amountInMax: ", amountInMax);
-        }
-      }
-    } catch (err) {
-      console.log(err);
+    if (!botToken || !chatId) {
+      console.error("Telegram token or chat ID missing in .env!");
+      return;
     }
-  });
-};
 
+    const telegramUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+    const body = {
+      chat_id: chatId,
+      text: messageText
+    };
+
+    const response = await fetch(telegramUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Telegram API error:", errText);
+    } else {
+      console.log("Telegram notification sent!");
+    }
+  } catch (error) {
+    console.error("Failed to send Telegram message:", error);
+  }
+}
+
+//--------------------------------------------------
+// 3) Main Logic
+//--------------------------------------------------
+async function main() {
+  // A startup message
+  console.log("Script started. Subscribing to ALL pending tx. Stand by...");
+
+  // Create a WebSocket provider
+  const wssProviderUrl = process.env.PROVIDER_WSS; 
+  if (!wssProviderUrl) {
+    console.error("No PROVIDER_WSS found in .env");
+    return;
+  }
+
+  const providerWSS = new ethers.providers.WebSocketProvider(wssProviderUrl);
+
+  // Listen for EVERY pending transaction
+  providerWSS.on("pending", async (txHash) => {
+    console.log("New pending tx:", txHash);
+
+    // Send the txHash via Telegram
+    await sendTelegramMessage(`New pending tx: ${txHash}`);
+  });
+}
+
+//--------------------------------------------------
+// 4) Run the Script
+//--------------------------------------------------
 main();
+
