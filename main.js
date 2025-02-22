@@ -11,13 +11,11 @@ dotenv.config();
 // 2) Imports
 //--------------------------------------------------
 const { ethers } = require("ethers");
-// If Node < 18, you need node-fetch:
-// const fetch = require("node-fetch");
 
 //--------------------------------------------------
-// 3) Simple console startup
+// 3) Console Startup
 //--------------------------------------------------
-console.log("Script started! Listening for pending tx...");
+console.log("Script started! Listening for Uniswap transactions from specific wallets...");
 
 //--------------------------------------------------
 // 4) Telegram Send Function
@@ -77,86 +75,98 @@ const abiERC20 = [
 ];
 
 //--------------------------------------------------
-// 7) Main Function
+// 7) List of Wallets to Track
+//--------------------------------------------------
+// Define an array of wallet addresses to monitor (all lowercase for easy comparison)
+const trackedWallets = new Set([
+  "0x1234567890abcdef1234567890abcdef12345678",
+  "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+  "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  // Add more wallet addresses here
+].map(addr => addr.toLowerCase())); // Convert all to lowercase
+
+//--------------------------------------------------
+// 8) Main Function
 //--------------------------------------------------
 const main = async () => {
-  // Listen for ALL pending tx
   providerWSS.on("pending", async (txHash) => {
-    // For debugging, log each pending tx hash
-    console.log("New pending tx:", txHash);
-
     try {
-      // Get the transaction details from the chain
+      // Get transaction details
       const tx = await provider.getTransaction(txHash);
+      if (!tx) return;
 
-      // Only proceed if this transaction calls Uniswap V3
-      if (tx && tx.to === addressUniswapV3) {
-        // Also check if data length is 522 (typical of a certain swap function)
-        if (tx.data.length === 522) {
-          // Decode the data (skip the first 4 bytes = function selector)
-          const dataSlice = ethers.utils.hexDataSlice(tx.data, 4);
+      // Convert addresses to lowercase for consistent matching
+      const fromAddress = tx.from?.toLowerCase();
+      const toAddress = tx.to?.toLowerCase();
 
-          const decoded = ethers.utils.defaultAbiCoder.decode(
-            [
-              "address", // tokenIn
-              "address", // tokenOut
-              "uint24",  // fee
-              "address", // recipient
-              "uint256", // amountIn
-              "uint256", // amountOutMinimum
-              "uint256", // amountInMaximum (or deadline param)
-              "uint160", // sqrtPriceLimitX96
-            ],
-            dataSlice
-          );
+      // ✅ Filter: Only proceed if the transaction involves a tracked wallet
+      if (!trackedWallets.has(fromAddress) && !trackedWallets.has(toAddress)) {
+        return; // Ignore transactions not involving tracked wallets
+      }
 
-          // Log results to console
-          console.log("\nOpen Transaction:", tx.hash);
-          console.log(decoded);
+      console.log(`🔍 Tracked wallet transaction detected: ${tx.hash}`);
 
-          // Interpret the tokens
-          const contract0 = new ethers.Contract(decoded[0], abiERC20, provider);
-          const contract1 = new ethers.Contract(decoded[1], abiERC20, provider);
+      // ✅ Check if transaction calls Uniswap V3
+      if (tx.to === addressUniswapV3 && tx.data.length > 10) {
+        // Decode transaction data (skip first 4 bytes)
+        const dataSlice = ethers.utils.hexDataSlice(tx.data, 4);
+        const decoded = ethers.utils.defaultAbiCoder.decode(
+          [
+            "address", // tokenIn
+            "address", // tokenOut
+            "uint24",  // fee
+            "address", // recipient
+            "uint256", // amountIn
+            "uint256", // amountOutMinimum
+            "uint256", // amountInMaximum
+            "uint160", // sqrtPriceLimitX96
+          ],
+          dataSlice
+        );
 
-          // Fetch symbols/decimals
-          const symbol0 = await contract0.symbol();
-          const symbol1 = await contract1.symbol();
-          const decimals0 = await contract0.decimals();
-          const decimals1 = await contract1.decimals();
+        // Log raw transaction details
+        console.log("\n🔄 Uniswap Swap Detected:", tx.hash);
+        console.log(decoded);
 
-          // Calculate amounts in human-readable form
-          const amountOut = Number(
-            ethers.utils.formatUnits(decoded[5], decimals1)
-          );
-          const amountInMax = Number(
-            ethers.utils.formatUnits(decoded[6], decimals0)
-          );
+        // Get token contract details
+        const contract0 = new ethers.Contract(decoded[0], abiERC20, provider);
+        const contract1 = new ethers.Contract(decoded[1], abiERC20, provider);
 
-          console.log("symbol0:", symbol0, decimals0);
-          console.log("symbol1:", symbol1, decimals1);
-          console.log("amountOut:", amountOut);
-          console.log("amountInMax:", amountInMax);
+        // Fetch token symbols & decimals
+        const symbol0 = await contract0.symbol();
+        const symbol1 = await contract1.symbol();
+        const decimals0 = await contract0.decimals();
+        const decimals1 = await contract1.decimals();
 
-          // Build a Telegram message
-          const telegramMsg = `
-Open Transaction: ${tx.hash}
-tokenIn (symbol0): ${symbol0} (decimals: ${decimals0})
-tokenOut (symbol1): ${symbol1} (decimals: ${decimals1})
-amountOut (Min): ${amountOut}
-amountInMax: ${amountInMax}
-`.trim();
+        // Convert values to human-readable format
+        const amountOut = Number(ethers.utils.formatUnits(decoded[5], decimals1));
+        const amountInMax = Number(ethers.utils.formatUnits(decoded[6], decimals0));
 
-          // Send it via Telegram
-          await sendTelegramMessage(telegramMsg);
-        }
+        console.log("🔹 tokenIn:", symbol0, decimals0);
+        console.log("🔹 tokenOut:", symbol1, decimals1);
+        console.log("🔹 amountOut (Min):", amountOut);
+        console.log("🔹 amountInMax:", amountInMax);
+
+       // ✅ Build a Telegram message (Updated format)
+        const telegramMsg = `
+🚀 *Uniswap Swap Alert!*
+🔹 *Tx Hash:* [View on Etherscan](https://etherscan.io/tx/${txHash})
+🔹 *From:* [${fromAddress}](https://etherscan.io/address/${fromAddress})
+🔹 *To:* [${toAddress}](https://etherscan.io/address/${toAddress})
+🔹 *Token In:* ${symbol0} (Max: ${amountInMax})
+🔹 *Token Out:* ${symbol1} (Min: ${amountOut})
+        `.trim();
+
+        // ✅ Send alert to Telegram
+        await sendTelegramMessage(telegramMsg);
       }
     } catch (err) {
-      console.log("Error fetching or decoding tx:", err);
+      console.log("❌ Error fetching or decoding tx:", err);
     }
   });
 };
 
 //--------------------------------------------------
-// 8) Run main()
+// 9) Run main()
 //--------------------------------------------------
 main();
