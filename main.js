@@ -136,33 +136,33 @@ const trackedWallets = new Set(
 let totalTxCount = 0;
 let swapTxCount = 0;
 
-// Set up a heartbeat: log stats every 60 seconds
+// Log heartbeat every 60 seconds
 setInterval(() => {
   console.log(`❤️ Heartbeat: Processed ${totalTxCount} transactions, ${swapTxCount} swaps detected in the last minute.`);
-  // Reset the counters after logging
   totalTxCount = 0;
   swapTxCount = 0;
-}, 60000); // 60,000 ms = 60 seconds
+}, 60000);
 
 //--------------------------------------------------
 // 9) Main Function
 //--------------------------------------------------
 const main = async () => {
   // Prepare filter: track transactions where either the sender or receiver is in our list.
-  const filter = [{
+  const filter = {
     fromAddress: Array.from(trackedWallets),
     toAddress: Array.from(trackedWallets)
-  }];
+  };
 
   try {
-    await providerWSS.send("alchemy_pendingTransactions", filter);
+    // Note: Use "eth_subscribe" with parameters as per Alchemy docs
+    await providerWSS.send("eth_subscribe", ["alchemy_pendingTransactions", filter]);
     console.log("Subscribed to alchemy_pendingTransactions with filter:", filter);
   } catch (err) {
     console.error("Subscription error:", err);
     return;
   }
 
-  // Listen for full transaction objects
+  // Listen for full transaction objects via the subscription
   providerWSS.on("alchemy_pendingTransactions", async (tx) => {
     try {
       if (!tx) return;
@@ -179,9 +179,9 @@ const main = async () => {
 
       console.log(`🔍 Tracked wallet transaction detected: ${tx.hash}`);
 
-      // Check if transaction is a Uniswap V3 swap (you can extend this logic for other protocols)
+      // Check if transaction is a Uniswap V3 swap (you can extend for other protocols)
       if (tx.to && tx.to.toLowerCase() === addressUniswapV3.toLowerCase() && tx.data && tx.data.length > 10) {
-        // Decode transaction data (skip the first 4 bytes, which is the function selector)
+        // Decode transaction data (skip the first 4 bytes which is the function selector)
         const dataSlice = ethers.utils.hexDataSlice(tx.data, 4);
         const decoded = ethers.utils.defaultAbiCoder.decode(
           [
@@ -200,7 +200,7 @@ const main = async () => {
         console.log("\n🔄 Uniswap Swap Detected:", tx.hash);
         console.log(decoded);
 
-        // Get token contract details to fetch symbols and decimals
+        // Fetch token details for readability
         const tokenInContract = new ethers.Contract(decoded[0], abiERC20, provider);
         const tokenOutContract = new ethers.Contract(decoded[1], abiERC20, provider);
 
@@ -209,7 +209,6 @@ const main = async () => {
         const decimalsIn = await tokenInContract.decimals();
         const decimalsOut = await tokenOutContract.decimals();
 
-        // Convert raw amounts to human-readable format
         const amountOutMin = Number(ethers.utils.formatUnits(decoded[5], decimalsOut));
         const amountInMax = Number(ethers.utils.formatUnits(decoded[6], decimalsIn));
 
@@ -218,9 +217,9 @@ const main = async () => {
         console.log("🔹 Amount Out (Min):", amountOutMin);
         console.log("🔹 Amount In (Max):", amountInMax);
 
-        swapTxCount++; // Increment swap-specific counter
+        swapTxCount++;
 
-        // Build a detailed Telegram message
+        // Build and send Telegram message
         const telegramMsg = `
 🚀 *Uniswap Swap Alert!*
 🔹 *Tx Hash:* [View on Etherscan](https://etherscan.io/tx/${tx.hash})
@@ -243,4 +242,3 @@ const main = async () => {
 // 10) Run main()
 //--------------------------------------------------
 main();
-
