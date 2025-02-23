@@ -141,8 +141,8 @@ const trackedWallets = new Set([
   "0x21491f369b31065a1c741f72ee0f80251c7d6628",
   "0x27556d4aaccd5867acb2c309fb9b5c918c67244b",
   "0x27b6dd2985ef2061992009e535e25944963da54a"
-].map(addr => addr.toLowerCase());
-
+  ].map(addr => addr.toLowerCase())
+)
 //--------------------------------------------------
 // 8) Health Check Counters
 //--------------------------------------------------
